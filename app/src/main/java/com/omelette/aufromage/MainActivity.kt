@@ -67,7 +67,7 @@ class MainActivity : Activity() {
         record=Button(this).apply { text="●   REC  ·  ENREGISTRER"; isAllCaps=false; textSize=14f; setTextColor(bg); background=shape(mint,16); setOnClickListener { recordClick() } }; recPanel.addView(record, LinearLayout.LayoutParams(-1,dp(54)))
         status=text("Aucun message enregistré",12,muted,false).apply { gravity=Gravity.START; setPadding(0,dp(10),0,0) }; recPanel.addView(status)
         recPanel.addView(space(10))
-        noiseGate=CheckBox(this).apply { text="Réduire le bruit de fond"; textSize=14f; setTextColor(white); buttonTintList=android.content.res.ColorStateList.valueOf(mint); setPadding(0,0,0,0); isChecked=getPreferences(0).getBoolean("noiseGate",false) }; recPanel.addView(noiseGate)
+        noiseGate=CheckBox(this).apply { text="Réduire le bruit de fond"; textSize=14f; setTextColor(white); buttonTintList=android.content.res.ColorStateList.valueOf(mint); setPadding(0,0,0,0); translationX=-dp(6).toFloat(); isChecked=getPreferences(0).getBoolean("noiseGate",false) }; recPanel.addView(noiseGate)
         recPanel.addView(space(10))
         noiseThreshold=SeekBar(this).apply { max=40; progress=getPreferences(0).getInt("noiseThreshold",15).coerceIn(0,40); progressTintList=android.content.res.ColorStateList.valueOf(mint); thumbTintList=android.content.res.ColorStateList.valueOf(mint) }
         noiseThresholdValue=text("Seuil du filtre · ${noiseThreshold.progress-60} dB",14,mint,true).apply { gravity=Gravity.START or Gravity.CENTER_VERTICAL }
@@ -98,7 +98,7 @@ class MainActivity : Activity() {
         mediaPercent=text("${mediaSlider.progress} %",14,mint,true).apply { gravity=Gravity.RIGHT or Gravity.CENTER_VERTICAL }
         mediaRow.addView(mediaSlider,LinearLayout.LayoutParams(0,dp(42),1f)); mediaRow.addView(mediaPercent,LinearLayout.LayoutParams(dp(56),dp(42))); options.addView(mediaRow)
         mediaSlider.setOnSeekBarChangeListener(object:SeekBar.OnSeekBarChangeListener { override fun onProgressChanged(s:SeekBar?,v:Int,u:Boolean) { mediaPercent.text="$v %"; getPreferences(0).edit().putInt("mediaVolume",v).apply(); sendService(AudioLoopService.ACTION_MEDIA_VOLUME,v) }; override fun onStartTrackingTouch(s:SeekBar?){}; override fun onStopTrackingTouch(s:SeekBar?){} })
-        normalize=CheckBox(this).apply { text="Normaliser le volume du message"; textSize=14f; setTextColor(white); buttonTintList=android.content.res.ColorStateList.valueOf(mint); setPadding(0,0,0,0); isChecked=getPreferences(0).getBoolean("normalize",false); setOnCheckedChangeListener { _,checked -> getPreferences(0).edit().putBoolean("normalize",checked).apply() } }; options.addView(normalize)
+        normalize=CheckBox(this).apply { text="Normaliser le volume du message"; textSize=14f; setTextColor(white); buttonTintList=android.content.res.ColorStateList.valueOf(mint); setPadding(0,0,0,0); translationX=-dp(6).toFloat(); isChecked=getPreferences(0).getBoolean("normalize",false); setOnCheckedChangeListener { _,checked -> getPreferences(0).edit().putBoolean("normalize",checked).apply() } }; options.addView(normalize)
         options.addView(text("Ajustez la musique pour garder votre voix bien distincte.",12,muted,false)); root.addView(options)
         root.addView(space(14))
         val actions=panel(); actions.setPadding(dp(20),dp(18),dp(20),dp(20)); actions.addView(text("3  ·  LANCER LA SÉANCE",12,mint,true)); actions.addView(space(8)); actions.addView(text("Choisissez le délai avant le lancement. L’aperçu reste immédiat.",14,muted,false)); actions.addView(space(12))
