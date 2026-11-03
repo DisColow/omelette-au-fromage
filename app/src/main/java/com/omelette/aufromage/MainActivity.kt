@@ -8,6 +8,7 @@ import android.content.pm.PackageManager
 import android.graphics.Color
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
+import android.media.AudioManager
 import android.media.AudioFormat
 import android.media.AudioRecord
 import android.media.MediaRecorder
@@ -23,7 +24,7 @@ import android.text.format.DateUtils
 
 class MainActivity : Activity() {
     private val bg = Color.rgb(16,25,39); private val card = Color.rgb(28,42,59); private val mint = Color.rgb(157,229,215); private val muted = Color.rgb(159,176,192); private val white = Color.rgb(245,248,250)
-    private lateinit var root: LinearLayout; private lateinit var record: Button; private lateinit var play: Button; private lateinit var preview: Button; private lateinit var status: TextView; private lateinit var slider: SeekBar; private lateinit var percent: TextView; private lateinit var normalize: CheckBox
+    private lateinit var root: LinearLayout; private lateinit var record: Button; private lateinit var play: Button; private lateinit var preview: Button; private lateinit var status: TextView; private lateinit var slider: SeekBar; private lateinit var percent: TextView; private lateinit var mediaSlider: SeekBar; private lateinit var mediaPercent: TextView; private lateinit var normalize: CheckBox
     private var recording = false; private var recorder: AudioRecord? = null; private var writer: Thread? = null; private var stopWrite = false
     private val handler = Handler(Looper.getMainLooper())
     private val loop = object: Runnable { override fun run() { refresh(); handler.postDelayed(this, 1000) } }
@@ -67,8 +68,17 @@ class MainActivity : Activity() {
         val options=panel(); options.setPadding(dp(20),dp(18),dp(20),dp(20)); options.addView(text("2  ·  VOTRE AMBIANCE",12,mint,true)); options.addView(space(8)); options.addView(text("Volume de la musique",15,white,true))
         val row=LinearLayout(this).apply { orientation=LinearLayout.HORIZONTAL; gravity=Gravity.CENTER_VERTICAL }
         slider=SeekBar(this).apply { max=100; progress=getPreferences(0).getInt("musicVolume",25); progressTintList=android.content.res.ColorStateList.valueOf(mint); thumbTintList=android.content.res.ColorStateList.valueOf(mint) }
-        percent=text("25 %",14,mint,true).apply { gravity=Gravity.RIGHT or Gravity.CENTER_VERTICAL }; row.addView(slider,LinearLayout.LayoutParams(0,dp(42),1f)); row.addView(percent,LinearLayout.LayoutParams(dp(56),dp(42))); options.addView(row)
+        percent=text("${slider.progress} %",14,mint,true).apply { gravity=Gravity.RIGHT or Gravity.CENTER_VERTICAL }; row.addView(slider,LinearLayout.LayoutParams(0,dp(42),1f)); row.addView(percent,LinearLayout.LayoutParams(dp(56),dp(42))); options.addView(row)
         slider.setOnSeekBarChangeListener(object:SeekBar.OnSeekBarChangeListener { override fun onProgressChanged(s:SeekBar?,v:Int,u:Boolean) { percent.text="$v %"; getPreferences(0).edit().putInt("musicVolume",v).apply(); sendService(AudioLoopService.ACTION_VOLUME,v) }; override fun onStartTrackingTouch(s:SeekBar?){}; override fun onStopTrackingTouch(s:SeekBar?){} })
+        val audioManager=getSystemService(Context.AUDIO_SERVICE) as AudioManager
+        val maxMediaVolume=audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC).coerceAtLeast(1)
+        val currentMediaVolume=audioManager.getStreamVolume(AudioManager.STREAM_MUSIC)*100/maxMediaVolume
+        options.addView(space(12)); options.addView(text("Volume multimédia",15,white,true))
+        val mediaRow=LinearLayout(this).apply { orientation=LinearLayout.HORIZONTAL; gravity=Gravity.CENTER_VERTICAL }
+        mediaSlider=SeekBar(this).apply { max=100; progress=getPreferences(0).getInt("mediaVolume",currentMediaVolume).coerceIn(0,100); progressTintList=android.content.res.ColorStateList.valueOf(mint); thumbTintList=android.content.res.ColorStateList.valueOf(mint) }
+        mediaPercent=text("${mediaSlider.progress} %",14,mint,true).apply { gravity=Gravity.RIGHT or Gravity.CENTER_VERTICAL }
+        mediaRow.addView(mediaSlider,LinearLayout.LayoutParams(0,dp(42),1f)); mediaRow.addView(mediaPercent,LinearLayout.LayoutParams(dp(56),dp(42))); options.addView(mediaRow)
+        mediaSlider.setOnSeekBarChangeListener(object:SeekBar.OnSeekBarChangeListener { override fun onProgressChanged(s:SeekBar?,v:Int,u:Boolean) { mediaPercent.text="$v %"; getPreferences(0).edit().putInt("mediaVolume",v).apply(); sendService(AudioLoopService.ACTION_MEDIA_VOLUME,v) }; override fun onStartTrackingTouch(s:SeekBar?){}; override fun onStopTrackingTouch(s:SeekBar?){} })
         normalize=CheckBox(this).apply { text="Normaliser le volume du message"; textSize=14f; setTextColor(white); buttonTintList=android.content.res.ColorStateList.valueOf(mint); isChecked=getPreferences(0).getBoolean("normalize",false); setOnCheckedChangeListener { _,checked -> getPreferences(0).edit().putBoolean("normalize",checked).apply() } }; options.addView(normalize)
         options.addView(text("Ajustez la musique pour garder votre voix bien distincte.",12,muted,false)); root.addView(options)
         root.addView(space(14))
@@ -96,7 +106,7 @@ class MainActivity : Activity() {
     private fun writeLE(o:java.io.DataOutputStream,v:Int,n:Int=4){ for(i in 0 until n)o.writeByte((v ushr (8*i)) and 255) }
     private fun stopRecording(){ stopWrite=true; recording=false; try{recorder?.stop(); recorder?.release()}catch(_:Exception){}; recorder=null; record.text="●   REC  ·  ENREGISTRER"; status.text="Finalisation du message…" }
     override fun onRequestPermissionsResult(r:Int,p:Array<out String>,g:IntArray){ super.onRequestPermissionsResult(r,p,g); if(r==7&&g.firstOrNull()==PackageManager.PERMISSION_GRANTED)recordClick() }
-    private fun startSession(previewNow:Boolean){ if(!java.io.File(filesDir,"message.wav").exists()){Toast.makeText(this,"Enregistrez d'abord votre message",Toast.LENGTH_SHORT).show();return}; val i=Intent(this,AudioLoopService::class.java).apply { action=AudioLoopService.ACTION_START; putExtra("preview",previewNow); putExtra("volume",slider.progress); putExtra("normalize",normalize.isChecked) }; if(Build.VERSION.SDK_INT>=26)startForegroundService(i) else startService(i); refresh() }
+    private fun startSession(previewNow:Boolean){ if(!java.io.File(filesDir,"message.wav").exists()){Toast.makeText(this,"Enregistrez d'abord votre message",Toast.LENGTH_SHORT).show();return}; val i=Intent(this,AudioLoopService::class.java).apply { action=AudioLoopService.ACTION_START; putExtra("preview",previewNow); putExtra("volume",slider.progress); putExtra("mediaVolume",mediaSlider.progress); putExtra("normalize",normalize.isChecked) }; if(Build.VERSION.SDK_INT>=26)startForegroundService(i) else startService(i); refresh() }
     private fun sendService(action:String,v:Int=slider.progress){startService(Intent(this,AudioLoopService::class.java).apply{this.action=action;putExtra("volume",v)})}
     private fun refresh(){ if(!::play.isInitialized)return; val prefs=getSharedPreferences("session",Context.MODE_PRIVATE); val state=prefs.getString("state","idle")?:"idle"; val end=prefs.getLong("end",0L); val has=java.io.File(filesDir,"message.wav").exists(); play.isEnabled=has; preview.isEnabled=has; if(has&& !recording && status.text.toString().startsWith("Aucun"))status.text="Message prêt · prêt pour votre séance"; if(state=="countdown"){val left=((end-System.currentTimeMillis()).coerceAtLeast(0))/1000; play.text="◷   DÉMARRAGE DANS ${DateUtils.formatElapsedTime(left)}"; preview.text="Aperçu immédiat"} else if(state=="playing"){play.text="♫   SÉANCE EN COURS"; preview.text="Aperçu immédiat"}else{play.text="▶   PLAY  ·  DÉMARRER DANS 1 H";preview.text="Aperçu immédiat"} }
     private fun text(s:String,size:Int,color:Int,bold:Boolean)=TextView(this).apply{text=s;textSize=size.toFloat();setTextColor(color);if(bold)typeface=Typeface.create("sans-serif-medium",Typeface.NORMAL); setLineSpacing(dp(3).toFloat(),1f)}
