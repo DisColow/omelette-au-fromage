@@ -109,6 +109,7 @@ jobs:
         run: |
           tag="v1.0.0-build.${GITHUB_RUN_NUMBER}.${GITHUB_RUN_ATTEMPT}"
           gh release create "$tag" release/app-release.apk \
+            --repo DisColow/omelette-au-fromage \
             --title "Omelette au fromage $tag" \
             --generate-notes \
             --latest
