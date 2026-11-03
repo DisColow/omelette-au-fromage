@@ -10,6 +10,7 @@ import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.media.AudioManager
 import android.media.AudioFormat
+import android.media.MediaPlayer
 import android.media.AudioRecord
 import android.media.MediaRecorder
 import android.os.Build
@@ -26,13 +27,13 @@ import android.text.format.DateUtils
 class MainActivity : Activity() {
     private val bg = Color.rgb(16,25,39); private val card = Color.rgb(28,42,59); private val mint = Color.rgb(157,229,215); private val muted = Color.rgb(159,176,192); private val white = Color.rgb(245,248,250)
     private val delayOptionsMinutes=intArrayOf(15,30,45,60,90,120)
-    private lateinit var root: LinearLayout; private lateinit var record: Button; private lateinit var play: Button; private lateinit var preview: Button; private lateinit var stop: Button; private lateinit var delaySpinner: Spinner; private lateinit var status: TextView; private lateinit var slider: SeekBar; private lateinit var percent: TextView; private lateinit var mediaSlider: SeekBar; private lateinit var mediaPercent: TextView; private lateinit var normalize: CheckBox; private lateinit var noiseGate: CheckBox; private lateinit var noiseThreshold: SeekBar; private lateinit var noiseThresholdValue: TextView
-    private var recording = false; private var recorder: AudioRecord? = null; private var writer: Thread? = null; private var stopWrite = false
+    private lateinit var root: LinearLayout; private lateinit var record: Button; private lateinit var play: Button; private lateinit var preview: Button; private lateinit var stop: Button; private lateinit var previewPlay: Button; private lateinit var previewPause: Button; private lateinit var delaySpinner: Spinner; private lateinit var status: TextView; private lateinit var slider: SeekBar; private lateinit var percent: TextView; private lateinit var mediaSlider: SeekBar; private lateinit var mediaPercent: TextView; private lateinit var normalize: CheckBox; private lateinit var noiseGate: CheckBox; private lateinit var noiseThreshold: SeekBar; private lateinit var noiseThresholdValue: TextView
+    private var recording = false; private var finalizingRecording = false; private var previewPreparing = false; private var previewPaused = false; private var previewPlayer: MediaPlayer? = null; private var recorder: AudioRecord? = null; private var writer: Thread? = null; private var stopWrite = false
     private val handler = Handler(Looper.getMainLooper())
     private val loop = object: Runnable { override fun run() { refresh(); handler.postDelayed(this, 1000) } }
 
     override fun onCreate(savedInstanceState: Bundle?) { super.onCreate(savedInstanceState); window.statusBarColor=bg; window.navigationBarColor=bg; buildUi(); handler.post(loop) }
-    override fun onDestroy() { handler.removeCallbacks(loop); super.onDestroy() }
+    override fun onDestroy() { handler.removeCallbacks(loop); stopRecordingPreview(); super.onDestroy() }
 
     private fun buildUi() {
         val scroll = ScrollView(this).apply { setBackgroundColor(bg); isFillViewport=true; clipToPadding=true }
@@ -64,16 +65,22 @@ class MainActivity : Activity() {
         recPanel.addView(text("1  ·  VOTRE MESSAGE",12,mint,true)); recPanel.addView(space(7)); recPanel.addView(text("Enregistrez quelques mots, une intention ou une affirmation.",14,muted,false)); recPanel.addView(space(16))
         record=Button(this).apply { text="●   REC  ·  ENREGISTRER"; isAllCaps=false; textSize=14f; setTextColor(bg); background=shape(mint,16); setOnClickListener { recordClick() } }; recPanel.addView(record, LinearLayout.LayoutParams(-1,dp(54)))
         status=text("Aucun message enregistré",12,muted,false).apply { gravity=Gravity.START; setPadding(0,dp(10),0,0) }; recPanel.addView(status)
-        noiseGate=CheckBox(this).apply { text="Réduire le bruit de fond"; textSize=14f; setTextColor(white); buttonTintList=android.content.res.ColorStateList.valueOf(mint); isChecked=getPreferences(0).getBoolean("noiseGate",false) }; recPanel.addView(noiseGate)
+        recPanel.addView(space(10))
+        noiseGate=CheckBox(this).apply { text="Réduire le bruit de fond"; textSize=14f; setTextColor(white); buttonTintList=android.content.res.ColorStateList.valueOf(mint); setPadding(0,0,0,0); isChecked=getPreferences(0).getBoolean("noiseGate",false) }; recPanel.addView(noiseGate)
         recPanel.addView(space(10))
         noiseThreshold=SeekBar(this).apply { max=40; progress=getPreferences(0).getInt("noiseThreshold",15).coerceIn(0,40); progressTintList=android.content.res.ColorStateList.valueOf(mint); thumbTintList=android.content.res.ColorStateList.valueOf(mint) }
         noiseThresholdValue=text("Seuil du filtre · ${noiseThreshold.progress-60} dB",14,mint,true).apply { gravity=Gravity.START or Gravity.CENTER_VERTICAL }
         recPanel.addView(noiseThresholdValue,LinearLayout.LayoutParams(-1,dp(32)))
         recPanel.addView(noiseThreshold,LinearLayout.LayoutParams(-1,dp(42)))
+        recPanel.addView(text("Le filtre atténue les sons sous ce seuil. Un seuil plus haut réduit davantage le bruit, mais peut aussi atténuer une voix douce.",12,muted,false))
         noiseThreshold.isEnabled=noiseGate.isChecked
         noiseThresholdValue.alpha=if(noiseGate.isChecked)1f else 0.45f
         noiseGate.setOnCheckedChangeListener { _,checked -> getPreferences(0).edit().putBoolean("noiseGate",checked).apply(); noiseThreshold.isEnabled=checked; noiseThresholdValue.alpha=if(checked)1f else 0.45f }
         noiseThreshold.setOnSeekBarChangeListener(object:SeekBar.OnSeekBarChangeListener { override fun onProgressChanged(s:SeekBar?,v:Int,u:Boolean) { noiseThresholdValue.text="Seuil du filtre · ${v-60} dB"; getPreferences(0).edit().putInt("noiseThreshold",v).apply() }; override fun onStartTrackingTouch(s:SeekBar?){}; override fun onStopTrackingTouch(s:SeekBar?){} })
+        val listenRow=LinearLayout(this).apply { orientation=LinearLayout.HORIZONTAL; gravity=Gravity.CENTER_VERTICAL }
+        previewPlay=Button(this).apply { text="▶   Écouter"; isAllCaps=false; textSize=14f; setTextColor(white); background=shape(Color.rgb(54,69,86),16); isEnabled=false; setOnClickListener { playRecordingPreview() } }
+        previewPause=Button(this).apply { text="Ⅱ   Pause"; isAllCaps=false; textSize=14f; setTextColor(white); background=shape(Color.rgb(54,69,86),16); isEnabled=false; setOnClickListener { pauseRecordingPreview() } }
+        listenRow.addView(previewPlay,LinearLayout.LayoutParams(0,dp(48),1f)); listenRow.addView(View(this),LinearLayout.LayoutParams(dp(10),1)); listenRow.addView(previewPause,LinearLayout.LayoutParams(0,dp(48),1f)); recPanel.addView(space(12)); recPanel.addView(listenRow)
         recPanel.addView(space(4)); root.addView(recPanel)
         root.addView(space(14))
         val options=panel(); options.setPadding(dp(20),dp(18),dp(20),dp(20)); options.addView(text("2  ·  VOTRE AMBIANCE",12,mint,true)); options.addView(space(8)); options.addView(text("Volume de la musique",15,white,true))
@@ -90,7 +97,7 @@ class MainActivity : Activity() {
         mediaPercent=text("${mediaSlider.progress} %",14,mint,true).apply { gravity=Gravity.RIGHT or Gravity.CENTER_VERTICAL }
         mediaRow.addView(mediaSlider,LinearLayout.LayoutParams(0,dp(42),1f)); mediaRow.addView(mediaPercent,LinearLayout.LayoutParams(dp(56),dp(42))); options.addView(mediaRow)
         mediaSlider.setOnSeekBarChangeListener(object:SeekBar.OnSeekBarChangeListener { override fun onProgressChanged(s:SeekBar?,v:Int,u:Boolean) { mediaPercent.text="$v %"; getPreferences(0).edit().putInt("mediaVolume",v).apply(); sendService(AudioLoopService.ACTION_MEDIA_VOLUME,v) }; override fun onStartTrackingTouch(s:SeekBar?){}; override fun onStopTrackingTouch(s:SeekBar?){} })
-        normalize=CheckBox(this).apply { text="Normaliser le volume du message"; textSize=14f; setTextColor(white); buttonTintList=android.content.res.ColorStateList.valueOf(mint); isChecked=getPreferences(0).getBoolean("normalize",false); setOnCheckedChangeListener { _,checked -> getPreferences(0).edit().putBoolean("normalize",checked).apply() } }; options.addView(normalize)
+        normalize=CheckBox(this).apply { text="Normaliser le volume du message"; textSize=14f; setTextColor(white); buttonTintList=android.content.res.ColorStateList.valueOf(mint); setPadding(0,0,0,0); isChecked=getPreferences(0).getBoolean("normalize",false); setOnCheckedChangeListener { _,checked -> getPreferences(0).edit().putBoolean("normalize",checked).apply() } }; options.addView(normalize)
         options.addView(text("Ajustez la musique pour garder votre voix bien distincte.",12,muted,false)); root.addView(options)
         root.addView(space(14))
         val actions=panel(); actions.setPadding(dp(20),dp(18),dp(20),dp(20)); actions.addView(text("3  ·  LANCER LA SÉANCE",12,mint,true)); actions.addView(space(8)); actions.addView(text("Choisissez le délai avant le lancement. L’aperçu reste immédiat.",14,muted,false)); actions.addView(space(12))
@@ -109,7 +116,7 @@ class MainActivity : Activity() {
         actions.addView(space(14))
         play=Button(this).apply { text="▶   PLAY  ·  DÉMARRER DANS ${durationLabel(selectedDelayMinutes())}"; isAllCaps=false; textSize=14f; setTextColor(bg); background=shape(mint,16); setOnClickListener { startSession(false) } }; actions.addView(play,LinearLayout.LayoutParams(-1,dp(54)))
         actions.addView(space(10)); preview=Button(this).apply { text="Aperçu immédiat"; isAllCaps=false; textSize=14f; setTextColor(white); background=shape(Color.rgb(54,69,86),16); setOnClickListener { startSession(true) } }; actions.addView(preview,LinearLayout.LayoutParams(-1,dp(50)))
-        stop=Button(this).apply { text="■   Arrêter la lecture"; isAllCaps=false; textSize=14f; setTextColor(muted); background=shape(Color.TRANSPARENT,16); isEnabled=false; alpha=0.5f; setOnClickListener { sendService(AudioLoopService.ACTION_STOP); refresh() } }; actions.addView(stop,LinearLayout.LayoutParams(-1,dp(56))); root.addView(actions)
+        actions.addView(space(10)); stop=Button(this).apply { text="■   Arrêter la lecture"; isAllCaps=false; textSize=14f; setTextColor(muted); background=shape(Color.TRANSPARENT,16); isEnabled=false; alpha=0.5f; setOnClickListener { if(previewPlayer!=null)stopRecordingPreview() else sendService(AudioLoopService.ACTION_STOP); refresh() } }; actions.addView(stop,LinearLayout.LayoutParams(-1,dp(56))); root.addView(actions)
         root.addView(space(14)); root.addView(text("La voix se répète avec 1 seconde de pause. La musique tourne sans interruption. Gardez votre téléphone branché pour une nuit complète.",12,muted,false))
         refresh()
     }
@@ -117,17 +124,34 @@ class MainActivity : Activity() {
         if (recording) { stopRecording(); return }
         if(checkSelfPermission(Manifest.permission.RECORD_AUDIO)!=PackageManager.PERMISSION_GRANTED){requestPermissions(arrayOf(Manifest.permission.RECORD_AUDIO),7); return}
         val rate=44100; val size=AudioRecord.getMinBufferSize(rate,AudioFormat.CHANNEL_IN_MONO,AudioFormat.ENCODING_PCM_16BIT).coerceAtLeast(8192)
-        try { recorder=AudioRecord(MediaRecorder.AudioSource.MIC,rate,AudioFormat.CHANNEL_IN_MONO,AudioFormat.ENCODING_PCM_16BIT,size); recorder!!.startRecording(); stopWrite=false; recording=true; record.text="■   ARRÊTER L'ENREGISTREMENT"; status.text="Enregistrement en cours…"; val normalizeAudio=normalize.isChecked; val noiseGateEnabled=noiseGate.isChecked; val noiseThresholdDb=noiseThreshold.progress-60; writer=Thread { capture(size,rate,normalizeAudio,noiseGateEnabled,noiseThresholdDb) }.also { it.start() } } catch(e:Exception){ Toast.makeText(this,"Impossible de démarrer le micro",Toast.LENGTH_LONG).show() }
+        try { stopRecordingPreview(); finalizingRecording=false; recorder=AudioRecord(MediaRecorder.AudioSource.MIC,rate,AudioFormat.CHANNEL_IN_MONO,AudioFormat.ENCODING_PCM_16BIT,size); recorder!!.startRecording(); stopWrite=false; recording=true; record.text="■   ARRÊTER L'ENREGISTREMENT"; status.text="Enregistrement en cours…"; val normalizeAudio=normalize.isChecked; val noiseGateEnabled=noiseGate.isChecked; val noiseThresholdDb=noiseThreshold.progress-60; writer=Thread { capture(size,rate,normalizeAudio,noiseGateEnabled,noiseThresholdDb) }.also { it.start() } } catch(e:Exception){ Toast.makeText(this,"Impossible de démarrer le micro",Toast.LENGTH_LONG).show() }
     }
     private fun capture(size:Int,rate:Int,normalizeAudio:Boolean,noiseGateEnabled:Boolean,noiseThresholdDb:Int) {
         val samples=java.io.ByteArrayOutputStream(); val buf=ShortArray(size/2)
         while(!stopWrite){ val n=recorder?.read(buf,0,buf.size)?:-1; if(n>0){ val bytes=ByteArray(n*2); for(i in 0 until n){val s=buf[i].toInt(); bytes[2*i]=s.toByte(); bytes[2*i+1]=(s shr 8).toByte()}; samples.write(bytes) } }
-        val pcm=samples.toByteArray(); if(pcm.isEmpty())return
+        val pcm=samples.toByteArray(); if(pcm.isEmpty()){runOnUiThread{finalizingRecording=false;refresh()};return}
         if(noiseGateEnabled)applyNoiseGate(pcm,rate,noiseThresholdDb)
         if(normalizeAudio){ var peak=0; var i=0; while(i+1<pcm.size){ val v= kotlin.math.abs(((pcm[i+1].toInt() shl 8) or (pcm[i].toInt() and 255)).toShort().toInt()); if(v>peak)peak=v; i+=2 }; if(peak>0){ val gain=32767.0/peak; i=0; while(i+1<pcm.size){ val v=((pcm[i+1].toInt() shl 8) or (pcm[i].toInt() and 255)).toShort().toInt(); val x=(v*gain).toInt().coerceIn(-32768,32767); pcm[i]=x.toByte(); pcm[i+1]=(x shr 8).toByte(); i+=2 } } }
         val f=java.io.File(filesDir,"message.wav"); java.io.DataOutputStream(java.io.BufferedOutputStream(java.io.FileOutputStream(f))).use { out -> out.writeBytes("RIFF"); writeLE(out,pcm.size+36); out.writeBytes("WAVEfmt "); writeLE(out,16); writeLE(out,1,2); writeLE(out,1,2); writeLE(out,rate); writeLE(out,rate*2); writeLE(out,2,2); writeLE(out,16,2); out.writeBytes("data"); writeLE(out,pcm.size); out.write(pcm) }
-        runOnUiThread { status.text="Message prêt · ${DateUtils.formatElapsedTime(pcm.size/2/rate.toLong())}"; refresh() }
+        runOnUiThread { finalizingRecording=false; status.text="Message prêt · ${DateUtils.formatElapsedTime(pcm.size/2/rate.toLong())}"; refresh() }
     }
+    private fun playRecordingPreview(){
+        val current=previewPlayer
+        if(current!=null){ if(previewPaused){current.start();previewPaused=false;refresh()};return }
+        val file=java.io.File(filesDir,"message.wav"); if(!file.exists()||recording||finalizingRecording)return
+        previewPreparing=true;refresh()
+        try {
+            val player=MediaPlayer(); previewPlayer=player
+            player.setAudioAttributes(AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_MEDIA).setContentType(AudioAttributes.CONTENT_TYPE_SPEECH).build())
+            player.setDataSource(file.absolutePath)
+            player.setOnPreparedListener { prepared -> if(previewPlayer===prepared){previewPreparing=false;previewPaused=false;prepared.start();refresh()}else prepared.release() }
+            player.setOnCompletionListener { completed -> if(previewPlayer===completed){previewPlayer=null;previewPreparing=false;previewPaused=false;completed.release();refresh()} }
+            player.setOnErrorListener { failed,_,_ -> if(previewPlayer===failed){previewPlayer=null;previewPreparing=false;previewPaused=false;failed.release();refresh()};true }
+            player.prepareAsync()
+        } catch(e:Exception){ stopRecordingPreview(); Toast.makeText(this,"Impossible de lire l'enregistrement",Toast.LENGTH_SHORT).show(); refresh() }
+    }
+    private fun pauseRecordingPreview(){ val player=previewPlayer?:return; if(player.isPlaying){player.pause();previewPaused=true;refresh()} }
+    private fun stopRecordingPreview(){ val player=previewPlayer; previewPlayer=null; previewPreparing=false; previewPaused=false; try{player?.setOnPreparedListener(null);player?.setOnCompletionListener(null);player?.setOnErrorListener(null)}catch(_:Exception){}; try{player?.release()}catch(_:Exception){} }
     private fun applyNoiseGate(pcm:ByteArray,rate:Int,thresholdDb:Int){
         val sampleCount=pcm.size/2; val frameSamples=(rate/50).coerceAtLeast(1); val threshold=32768.0*Math.pow(10.0,thresholdDb/20.0); val attackSamples=(rate/200).coerceAtLeast(1); val releaseSamples=(rate/12).coerceAtLeast(1)
         var gain=0.0; var gateOpen=false; var frameStart=0
@@ -141,11 +165,11 @@ class MainActivity : Activity() {
         }
     }
     private fun writeLE(o:java.io.DataOutputStream,v:Int,n:Int=4){ for(i in 0 until n)o.writeByte((v ushr (8*i)) and 255) }
-    private fun stopRecording(){ stopWrite=true; recording=false; try{recorder?.stop(); recorder?.release()}catch(_:Exception){}; recorder=null; record.text="●   REC  ·  ENREGISTRER"; status.text="Finalisation du message…" }
+    private fun stopRecording(){ stopWrite=true; recording=false; finalizingRecording=true; try{recorder?.stop(); recorder?.release()}catch(_:Exception){}; recorder=null; record.text="●   REC  ·  ENREGISTRER"; status.text="Finalisation du message…" }
     override fun onRequestPermissionsResult(r:Int,p:Array<out String>,g:IntArray){ super.onRequestPermissionsResult(r,p,g); if(r==7&&g.firstOrNull()==PackageManager.PERMISSION_GRANTED)recordClick() }
-    private fun startSession(previewNow:Boolean){ if(!java.io.File(filesDir,"message.wav").exists()){Toast.makeText(this,"Enregistrez d'abord votre message",Toast.LENGTH_SHORT).show();return}; val i=Intent(this,AudioLoopService::class.java).apply { action=AudioLoopService.ACTION_START; putExtra("preview",previewNow); putExtra("volume",slider.progress); putExtra("mediaVolume",mediaSlider.progress); putExtra("delayMinutes",selectedDelayMinutes()); putExtra("normalize",normalize.isChecked) }; if(Build.VERSION.SDK_INT>=26)startForegroundService(i) else startService(i); refresh() }
+    private fun startSession(previewNow:Boolean){ if(!java.io.File(filesDir,"message.wav").exists()){Toast.makeText(this,"Enregistrez d'abord votre message",Toast.LENGTH_SHORT).show();return}; stopRecordingPreview(); val i=Intent(this,AudioLoopService::class.java).apply { action=AudioLoopService.ACTION_START; putExtra("preview",previewNow); putExtra("volume",slider.progress); putExtra("mediaVolume",mediaSlider.progress); putExtra("delayMinutes",selectedDelayMinutes()); putExtra("normalize",normalize.isChecked) }; if(Build.VERSION.SDK_INT>=26)startForegroundService(i) else startService(i); refresh() }
     private fun sendService(action:String,v:Int=slider.progress){startService(Intent(this,AudioLoopService::class.java).apply{this.action=action;putExtra("volume",v)})}
-    private fun refresh(){ if(!::play.isInitialized)return; val prefs=getSharedPreferences("session",Context.MODE_PRIVATE); val state=prefs.getString("state","idle")?:"idle"; val end=prefs.getLong("end",0L); val has=java.io.File(filesDir,"message.wav").exists(); val isPlaying=state=="playing"; val isCountdown=state=="countdown"; play.isEnabled=has; preview.isEnabled=has; delaySpinner.isEnabled=!isPlaying&&!isCountdown; stop.isEnabled=isPlaying||isCountdown; stop.text=if(isCountdown)"◷   Annuler le compte à rebours" else "■   Arrêter la lecture"; stop.background=shape(if(isPlaying)Color.rgb(137,58,66) else if(isCountdown)Color.rgb(41,58,74) else Color.TRANSPARENT,16); stop.setTextColor(if(isPlaying)white else muted); stop.alpha=if(isPlaying)1f else if(isCountdown)0.85f else 0.5f; if(has&& !recording && status.text.toString().startsWith("Aucun"))status.text="Message prêt · prêt pour votre séance"; if(isCountdown){val left=((end-System.currentTimeMillis()).coerceAtLeast(0))/1000; play.text="◷   DÉMARRAGE DANS ${DateUtils.formatElapsedTime(left)}"; preview.text="Aperçu immédiat"} else if(isPlaying){play.text="♫   SÉANCE EN COURS"; preview.text="Aperçu immédiat"}else{play.text="▶   PLAY  ·  DÉMARRER DANS ${durationLabel(selectedDelayMinutes())}";preview.text="Aperçu immédiat"} }
+    private fun refresh(){ if(!::play.isInitialized)return; val prefs=getSharedPreferences("session",Context.MODE_PRIVATE); val state=prefs.getString("state","idle")?:"idle"; val end=prefs.getLong("end",0L); val has=java.io.File(filesDir,"message.wav").exists(); val isPreviewPlaying=previewPlayer?.isPlaying==true; val isPlaying=state=="playing"||isPreviewPlaying; val isCountdown=state=="countdown"; val canPreview=has&&!recording&&!finalizingRecording&&state=="idle"; play.isEnabled=has&&state=="idle"&&!recording&&!finalizingRecording&&previewPlayer==null&&!previewPreparing; preview.isEnabled=play.isEnabled; delaySpinner.isEnabled=!isPlaying&&!isCountdown; previewPlay.isEnabled=canPreview&&!previewPreparing&&!isPreviewPlaying; previewPause.isEnabled=canPreview&&isPreviewPlaying; stop.isEnabled=isPlaying||isCountdown; stop.text=if(isCountdown)"◷   Annuler le compte à rebours" else "■   Arrêter la lecture"; stop.background=shape(if(isPlaying)Color.rgb(137,58,66) else if(isCountdown)Color.rgb(41,58,74) else Color.TRANSPARENT,16); stop.setTextColor(if(isPlaying)white else muted); stop.alpha=if(isPlaying)1f else if(isCountdown)0.85f else 0.5f; if(has&& !recording && status.text.toString().startsWith("Aucun"))status.text="Message prêt · prêt pour votre séance"; if(isCountdown){val left=((end-System.currentTimeMillis()).coerceAtLeast(0))/1000; play.text="◷   DÉMARRAGE DANS ${DateUtils.formatElapsedTime(left)}"; preview.text="Aperçu immédiat"} else if(state=="playing"){play.text="♫   SÉANCE EN COURS"; preview.text="Aperçu immédiat"}else{play.text="▶   PLAY  ·  DÉMARRER DANS ${durationLabel(selectedDelayMinutes())}";preview.text="Aperçu immédiat"} }
     private fun selectedDelayMinutes():Int { val position=if(::delaySpinner.isInitialized)delaySpinner.selectedItemPosition else -1; return if(position in delayOptionsMinutes.indices)delayOptionsMinutes[position] else getPreferences(0).getInt("delayMinutes",60) }
     private fun durationLabel(minutes:Int):String = when { minutes%60==0 -> "${minutes/60} h"; minutes>60 -> "${minutes/60} h ${minutes%60} min"; else -> "$minutes min" }
     private fun text(s:String,size:Int,color:Int,bold:Boolean)=TextView(this).apply{text=s;textSize=size.toFloat();setTextColor(color);if(bold)typeface=Typeface.create("sans-serif-medium",Typeface.NORMAL); setLineSpacing(dp(3).toFloat(),1f)}
