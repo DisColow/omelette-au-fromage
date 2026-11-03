@@ -24,7 +24,7 @@ import android.text.format.DateUtils
 
 class MainActivity : Activity() {
     private val bg = Color.rgb(16,25,39); private val card = Color.rgb(28,42,59); private val mint = Color.rgb(157,229,215); private val muted = Color.rgb(159,176,192); private val white = Color.rgb(245,248,250)
-    private lateinit var root: LinearLayout; private lateinit var record: Button; private lateinit var play: Button; private lateinit var preview: Button; private lateinit var status: TextView; private lateinit var slider: SeekBar; private lateinit var percent: TextView; private lateinit var mediaSlider: SeekBar; private lateinit var mediaPercent: TextView; private lateinit var normalize: CheckBox
+    private lateinit var root: LinearLayout; private lateinit var record: Button; private lateinit var play: Button; private lateinit var preview: Button; private lateinit var status: TextView; private lateinit var slider: SeekBar; private lateinit var percent: TextView; private lateinit var mediaSlider: SeekBar; private lateinit var mediaPercent: TextView; private lateinit var normalize: CheckBox; private lateinit var noiseGate: CheckBox; private lateinit var noiseThreshold: SeekBar; private lateinit var noiseThresholdValue: TextView
     private var recording = false; private var recorder: AudioRecord? = null; private var writer: Thread? = null; private var stopWrite = false
     private val handler = Handler(Looper.getMainLooper())
     private val loop = object: Runnable { override fun run() { refresh(); handler.postDelayed(this, 1000) } }
@@ -63,7 +63,18 @@ class MainActivity : Activity() {
         val recPanel=panel(); recPanel.setPadding(dp(20),dp(18),dp(20),dp(20))
         recPanel.addView(text("1  ·  VOTRE MESSAGE",12,mint,true)); recPanel.addView(space(7)); recPanel.addView(text("Enregistrez quelques mots, une intention ou une affirmation.",14,muted,false)); recPanel.addView(space(16))
         record=Button(this).apply { text="●   REC  ·  ENREGISTRER"; isAllCaps=false; textSize=14f; setTextColor(bg); background=shape(mint,16); setOnClickListener { recordClick() } }; recPanel.addView(record, LinearLayout.LayoutParams(-1,dp(54)))
-        status=text("Aucun message enregistré",12,muted,false).apply { gravity=Gravity.CENTER; setPadding(0,dp(10),0,0) }; recPanel.addView(status); root.addView(recPanel)
+        status=text("Aucun message enregistré",12,muted,false).apply { gravity=Gravity.CENTER; setPadding(0,dp(10),0,0) }; recPanel.addView(status)
+        noiseGate=CheckBox(this).apply { text="Réduire le bruit de fond"; textSize=14f; setTextColor(white); buttonTintList=android.content.res.ColorStateList.valueOf(mint); isChecked=getPreferences(0).getBoolean("noiseGate",false) }; recPanel.addView(noiseGate)
+        val thresholdHeader=LinearLayout(this).apply { orientation=LinearLayout.HORIZONTAL; gravity=Gravity.CENTER_VERTICAL }
+        thresholdHeader.addView(text("Seuil du filtre",14,white,true),LinearLayout.LayoutParams(0,dp(32),1f))
+        noiseThreshold=SeekBar(this).apply { max=40; progress=getPreferences(0).getInt("noiseThreshold",15).coerceIn(0,40); progressTintList=android.content.res.ColorStateList.valueOf(mint); thumbTintList=android.content.res.ColorStateList.valueOf(mint) }
+        noiseThresholdValue=text("${noiseThreshold.progress-60} dB",14,mint,true).apply { gravity=Gravity.RIGHT or Gravity.CENTER_VERTICAL }
+        thresholdHeader.addView(noiseThresholdValue,LinearLayout.LayoutParams(dp(64),dp(32))); recPanel.addView(thresholdHeader)
+        noiseThreshold.isEnabled=noiseGate.isChecked
+        noiseThresholdValue.alpha=if(noiseGate.isChecked)1f else 0.45f
+        noiseGate.setOnCheckedChangeListener { _,checked -> getPreferences(0).edit().putBoolean("noiseGate",checked).apply(); noiseThreshold.isEnabled=checked; noiseThresholdValue.alpha=if(checked)1f else 0.45f }
+        noiseThreshold.setOnSeekBarChangeListener(object:SeekBar.OnSeekBarChangeListener { override fun onProgressChanged(s:SeekBar?,v:Int,u:Boolean) { noiseThresholdValue.text="${v-60} dB"; getPreferences(0).edit().putInt("noiseThreshold",v).apply() }; override fun onStartTrackingTouch(s:SeekBar?){}; override fun onStopTrackingTouch(s:SeekBar?){} })
+        recPanel.addView(space(4)); root.addView(recPanel)
         root.addView(space(14))
         val options=panel(); options.setPadding(dp(20),dp(18),dp(20),dp(20)); options.addView(text("2  ·  VOTRE AMBIANCE",12,mint,true)); options.addView(space(8)); options.addView(text("Volume de la musique",15,white,true))
         val row=LinearLayout(this).apply { orientation=LinearLayout.HORIZONTAL; gravity=Gravity.CENTER_VERTICAL }
@@ -93,15 +104,28 @@ class MainActivity : Activity() {
         if (recording) { stopRecording(); return }
         if(checkSelfPermission(Manifest.permission.RECORD_AUDIO)!=PackageManager.PERMISSION_GRANTED){requestPermissions(arrayOf(Manifest.permission.RECORD_AUDIO),7); return}
         val rate=44100; val size=AudioRecord.getMinBufferSize(rate,AudioFormat.CHANNEL_IN_MONO,AudioFormat.ENCODING_PCM_16BIT).coerceAtLeast(8192)
-        try { recorder=AudioRecord(MediaRecorder.AudioSource.MIC,rate,AudioFormat.CHANNEL_IN_MONO,AudioFormat.ENCODING_PCM_16BIT,size); recorder!!.startRecording(); stopWrite=false; recording=true; record.text="■   ARRÊTER L'ENREGISTREMENT"; status.text="Enregistrement en cours…"; writer=Thread { capture(size,rate) }.also { it.start() } } catch(e:Exception){ Toast.makeText(this,"Impossible de démarrer le micro",Toast.LENGTH_LONG).show() }
+        try { recorder=AudioRecord(MediaRecorder.AudioSource.MIC,rate,AudioFormat.CHANNEL_IN_MONO,AudioFormat.ENCODING_PCM_16BIT,size); recorder!!.startRecording(); stopWrite=false; recording=true; record.text="■   ARRÊTER L'ENREGISTREMENT"; status.text="Enregistrement en cours…"; val normalizeAudio=normalize.isChecked; val noiseGateEnabled=noiseGate.isChecked; val noiseThresholdDb=noiseThreshold.progress-60; writer=Thread { capture(size,rate,normalizeAudio,noiseGateEnabled,noiseThresholdDb) }.also { it.start() } } catch(e:Exception){ Toast.makeText(this,"Impossible de démarrer le micro",Toast.LENGTH_LONG).show() }
     }
-    private fun capture(size:Int,rate:Int) {
+    private fun capture(size:Int,rate:Int,normalizeAudio:Boolean,noiseGateEnabled:Boolean,noiseThresholdDb:Int) {
         val samples=java.io.ByteArrayOutputStream(); val buf=ShortArray(size/2)
         while(!stopWrite){ val n=recorder?.read(buf,0,buf.size)?:-1; if(n>0){ val bytes=ByteArray(n*2); for(i in 0 until n){val s=buf[i].toInt(); bytes[2*i]=s.toByte(); bytes[2*i+1]=(s shr 8).toByte()}; samples.write(bytes) } }
         val pcm=samples.toByteArray(); if(pcm.isEmpty())return
-        if(normalize.isChecked){ var peak=0; var i=0; while(i+1<pcm.size){ val v= kotlin.math.abs(((pcm[i+1].toInt() shl 8) or (pcm[i].toInt() and 255)).toShort().toInt()); if(v>peak)peak=v; i+=2 }; if(peak>0){ val gain=32767.0/peak; i=0; while(i+1<pcm.size){ val v=((pcm[i+1].toInt() shl 8) or (pcm[i].toInt() and 255)).toShort().toInt(); val x=(v*gain).toInt().coerceIn(-32768,32767); pcm[i]=x.toByte(); pcm[i+1]=(x shr 8).toByte(); i+=2 } } }
+        if(noiseGateEnabled)applyNoiseGate(pcm,rate,noiseThresholdDb)
+        if(normalizeAudio){ var peak=0; var i=0; while(i+1<pcm.size){ val v= kotlin.math.abs(((pcm[i+1].toInt() shl 8) or (pcm[i].toInt() and 255)).toShort().toInt()); if(v>peak)peak=v; i+=2 }; if(peak>0){ val gain=32767.0/peak; i=0; while(i+1<pcm.size){ val v=((pcm[i+1].toInt() shl 8) or (pcm[i].toInt() and 255)).toShort().toInt(); val x=(v*gain).toInt().coerceIn(-32768,32767); pcm[i]=x.toByte(); pcm[i+1]=(x shr 8).toByte(); i+=2 } } }
         val f=java.io.File(filesDir,"message.wav"); java.io.DataOutputStream(java.io.BufferedOutputStream(java.io.FileOutputStream(f))).use { out -> out.writeBytes("RIFF"); writeLE(out,pcm.size+36); out.writeBytes("WAVEfmt "); writeLE(out,16); writeLE(out,1,2); writeLE(out,1,2); writeLE(out,rate); writeLE(out,rate*2); writeLE(out,2,2); writeLE(out,16,2); out.writeBytes("data"); writeLE(out,pcm.size); out.write(pcm) }
         runOnUiThread { status.text="Message prêt · ${DateUtils.formatElapsedTime(pcm.size/2/rate.toLong())}"; refresh() }
+    }
+    private fun applyNoiseGate(pcm:ByteArray,rate:Int,thresholdDb:Int){
+        val sampleCount=pcm.size/2; val frameSamples=(rate/50).coerceAtLeast(1); val threshold=32768.0*Math.pow(10.0,thresholdDb/20.0); val attackSamples=(rate/200).coerceAtLeast(1); val releaseSamples=(rate/12).coerceAtLeast(1)
+        var gain=0.0; var gateOpen=false; var frameStart=0
+        while(frameStart<sampleCount){
+            val frameEnd=(frameStart+frameSamples).coerceAtMost(sampleCount); var sumSquares=0.0
+            for(i in frameStart until frameEnd){ val sample=((pcm[i*2+1].toInt() shl 8) or (pcm[i*2].toInt() and 255)).toShort().toInt(); sumSquares+=sample.toDouble()*sample }
+            val rms=kotlin.math.sqrt(sumSquares/(frameEnd-frameStart)); if(gateOpen){if(rms<threshold*0.7)gateOpen=false}else if(rms>=threshold)gateOpen=true
+            val targetGain=if(gateOpen)1.0 else 0.0; val step=1.0/if(targetGain>gain)attackSamples else releaseSamples
+            for(i in frameStart until frameEnd){ gain=if(targetGain>gain)(gain+step).coerceAtMost(targetGain) else (gain-step).coerceAtLeast(targetGain); val sample=((pcm[i*2+1].toInt() shl 8) or (pcm[i*2].toInt() and 255)).toShort().toInt(); val filtered=(sample*gain).toInt().coerceIn(-32768,32767); pcm[i*2]=filtered.toByte(); pcm[i*2+1]=(filtered shr 8).toByte() }
+            frameStart=frameEnd
+        }
     }
     private fun writeLE(o:java.io.DataOutputStream,v:Int,n:Int=4){ for(i in 0 until n)o.writeByte((v ushr (8*i)) and 255) }
     private fun stopRecording(){ stopWrite=true; recording=false; try{recorder?.stop(); recorder?.release()}catch(_:Exception){}; recorder=null; record.text="●   REC  ·  ENREGISTRER"; status.text="Finalisation du message…" }
