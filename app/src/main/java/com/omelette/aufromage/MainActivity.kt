@@ -51,7 +51,7 @@ class MainActivity : Activity() {
         }
         scroll.addView(root); setContentView(scroll)
         val top = LinearLayout(this).apply { orientation=LinearLayout.HORIZONTAL; gravity=Gravity.CENTER_VERTICAL }
-        val icon = ImageView(this).apply { setImageResource(R.drawable.omelette_icon) }; top.addView(icon, LinearLayout.LayoutParams(dp(54),dp(54)))
+        val icon = ImageView(this).apply { setImageResource(R.drawable.omelette_logo) }; top.addView(icon, LinearLayout.LayoutParams(dp(54),dp(54)))
         val heading = LinearLayout(this).apply { orientation=LinearLayout.VERTICAL; setPadding(dp(13),0,0,0) }
         heading.addView(text("omelette au fromage",21,white,true)); heading.addView(text("Votre rituel du sommeil",13,muted,false)); top.addView(heading); root.addView(top)
         root.addView(space(24))
