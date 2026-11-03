@@ -103,6 +103,7 @@ class MainActivity : Activity() {
         root.addView(space(14))
         val actions=panel(); actions.setPadding(dp(20),dp(18),dp(20),dp(20)); actions.addView(text("3  ·  LANCER LA SÉANCE",12,mint,true)); actions.addView(space(8)); actions.addView(text("Choisissez le délai avant le lancement. L’aperçu reste immédiat.",14,muted,false)); actions.addView(space(12))
         actions.addView(text("Délai avant la séance",14,white,true))
+        actions.addView(space(8))
         val delayLabels=delayOptionsMinutes.map { durationLabel(it) }.toTypedArray()
         val delayAdapter=object:ArrayAdapter<String>(this,android.R.layout.simple_spinner_item,delayLabels){
             override fun getView(position:Int,convertView:View?,parent:ViewGroup):View = (super.getView(position,convertView,parent) as TextView).apply { setTextColor(white); gravity=Gravity.CENTER_VERTICAL; setPadding(dp(12),0,dp(36),0) }
@@ -114,7 +115,7 @@ class MainActivity : Activity() {
         delaySelector.addView(text("▼",11,mint,true).apply { gravity=Gravity.RIGHT or Gravity.CENTER_VERTICAL; setPadding(0,0,dp(14),0); isClickable=false; isFocusable=false },FrameLayout.LayoutParams(-1,dp(48)))
         actions.addView(delaySelector,LinearLayout.LayoutParams(-1,dp(48)))
         delaySpinner.onItemSelectedListener=object:AdapterView.OnItemSelectedListener { override fun onItemSelected(parent:AdapterView<*>?,view:View?,position:Int,id:Long) { getPreferences(0).edit().putInt("delayMinutes",delayOptionsMinutes[position]).apply(); if(::play.isInitialized)refresh() }; override fun onNothingSelected(parent:AdapterView<*>?){} }
-        actions.addView(space(14))
+        actions.addView(space(10))
         play=Button(this).apply { text="▶   PLAY  ·  DÉMARRER DANS ${durationLabel(selectedDelayMinutes())}"; isAllCaps=false; textSize=14f; setTextColor(bg); background=shape(mint,16); setOnClickListener { startSession(false) } }; actions.addView(play,LinearLayout.LayoutParams(-1,dp(54)))
         actions.addView(space(10)); preview=Button(this).apply { text="Aperçu immédiat"; isAllCaps=false; textSize=14f; setTextColor(white); background=shape(Color.rgb(54,69,86),16); setOnClickListener { startSession(true) } }; actions.addView(preview,LinearLayout.LayoutParams(-1,dp(50)))
         actions.addView(space(10)); stop=Button(this).apply { text="■   Arrêter la lecture"; isAllCaps=false; textSize=14f; setTextColor(muted); background=shape(Color.TRANSPARENT,16); isEnabled=false; alpha=0.5f; setOnClickListener { if(previewPlayer!=null)stopRecordingPreview() else sendService(AudioLoopService.ACTION_STOP); refresh() } }; actions.addView(stop,LinearLayout.LayoutParams(-1,dp(56))); root.addView(actions)
