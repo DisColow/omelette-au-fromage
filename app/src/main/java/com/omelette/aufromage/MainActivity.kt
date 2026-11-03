@@ -9,6 +9,7 @@ import android.graphics.Color
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.media.AudioManager
+import android.media.AudioAttributes
 import android.media.AudioFormat
 import android.media.MediaPlayer
 import android.media.AudioRecord
