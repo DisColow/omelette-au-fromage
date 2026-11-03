@@ -17,6 +17,7 @@ import android.os.Handler
 import android.os.Looper
 import android.view.Gravity
 import android.view.View
+import android.view.WindowInsets
 import android.widget.*
 import android.text.format.DateUtils
 
@@ -33,8 +34,18 @@ class MainActivity : Activity() {
     private fun buildUi() {
         val scroll = ScrollView(this).apply { setBackgroundColor(bg); isFillViewport=true; clipToPadding=true }
         root = LinearLayout(this).apply { orientation=LinearLayout.VERTICAL; setPadding(dp(24),dp(18),dp(24),dp(32)) }
-        scroll.setOnApplyWindowInsetsListener { view, insets ->
-            view.setPadding(insets.systemWindowInsetLeft, insets.systemWindowInsetTop, insets.systemWindowInsetRight, insets.systemWindowInsetBottom)
+        scroll.setOnApplyWindowInsetsListener { _, insets ->
+            val topInset: Int
+            val bottomInset: Int
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                val systemBars = insets.getInsets(WindowInsets.Type.systemBars() or WindowInsets.Type.displayCutout())
+                topInset = systemBars.top
+                bottomInset = systemBars.bottom
+            } else {
+                topInset = insets.systemWindowInsetTop
+                bottomInset = insets.systemWindowInsetBottom
+            }
+            root.setPadding(dp(24), dp(18) + topInset, dp(24), dp(32) + bottomInset)
             insets
         }
         scroll.addView(root); setContentView(scroll)
